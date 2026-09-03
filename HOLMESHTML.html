@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>H.O.L.M.E.S. ARCHIVE SYSTEM</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="crt-overlay"></div>
+  <div class="terminal-container">
+    <div id="output"></div>
+    <div class="input-line">
+      <span class="prompt">&gt;</span>
+      <input type="text" id="command-input" autofocus autocomplete="off" spellcheck="false">
+    </div>
+  </div>
+  <input type="file" id="import-file" style="display: none;" accept=".json">
+  <script src="terminal.js"></script>
+</body>
+</html>
