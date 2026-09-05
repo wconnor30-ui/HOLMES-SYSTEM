@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>H.O.L.M.E.S. ARCHIVE SYSTEM</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: #050b05;
+      color: #00ff66;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 16px;
+      min-height: 100vh;
+      padding: 20px;
+      overflow-x: hidden;
+    }
+
+    /* CRT Scanline and Glow Effect */
+    .crt-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+      background-size: 100% 4px;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .terminal-container {
+      max-width: 900px;
+      margin: 0 auto;
+      text-shadow: 0 0 5px rgba(0, 255, 102, 0.7);
+    }
+
+    #output {
+      white-space: pre-wrap;
+      line-height: 1.4;
+      margin-bottom: 10px;
+    }
+
+    .input-line {
+      display: flex;
+      align-items: center;
+    }
+
+    .prompt {
+      margin-right: 10px;
+      font-weight: bold;
+    }
+
+    #command-input {
+      background: transparent;
+      border: none;
+      color: #00ff66;
+      font-family: inherit;
+      font-size: inherit;
+      width: 100%;
+      outline: none;
+      text-shadow: 0 0 5px rgba(0, 255, 102, 0.7);
+    }
+
+    /* Loading Bar Styles */
+    .loading-container {
+      margin: 10px 0;
+    }
+
+    .loading-border {
+      border: 1px solid #00ff66;
+      padding: 3px;
+      width: 320px;
+      box-shadow: 0 0 5px rgba(0, 255, 102, 0.5);
+    }
+
+    .loading-bar {
+      height: 16px;
+      background-color: #00ff66;
+      width: 0%;
+      box-shadow: 0 0 8px #00ff66;
+    }
+  </style>
+</head>
+<body>
+  <div class="crt-overlay"></div>
+  <div class="terminal-container">
+    <div id="output"></div>
+    <div class="input-line">
+      <span class="prompt">&gt;</span>
+      <input type="text" id="command-input" autofocus autocomplete="off" spellcheck="false">
+    </div>
+  </div>
+  <input type="file" id="import-file" style="display: none;" accept=".json">
+  <input type="file" id="attach-files" style="display: none;" multiple>
+
+  <script>
+    let __loopProtection = true;
+    function disableLoopProtection() {
+      __loopProtection = false;
+    }
+
+    const __loopProtector = (function () {
+      const maxIterationsOverall = 1_000_000;
+      let counter = 0;
+      return function () {
+        if (__loopProtection) {
+          if (counter > maxIterationsOverall) {
+            throw new Error('Infinite loop detected.');
+          }
+          counter++;
+        }
+      }
+    })();
+
+    // Initial State & Data Persistence
+    let database = JSON.parse(localStorage.getItem('HOLMES_DB')) || [{
+      id: "REC-001",
+      title: "Project HOLMES Initialization",
+      category: "SYSTEM",
+      details: "Core archive terminal online. Local storage active.",
+      attachments: []
+    }];
+
+    let entryMode = false;
+    let tempEntry = {};
+    let entryStep = 0;
+    let isProcessing = false;
+
+    const MAX_SINGLE_FILE_SIZE = 2 * 1024 * 1024; // 2 MB size cap per file
+
+    const output = document.getElementById('output');
+    const input = document.getElementById('command-input');
+    const fileInput = document.getElementById('import-file');
+    const attachInput = document.getElementById('attach-files');
+
+    // Boot Sequence Output
+    printLine("==================================================");
+    printLine("  H.O.L.M.E.S. ARCHIVE SYSTEM - V2.14");
+    printLine("  GLOBAL PROCESS LOADING ENGINE ACTIVE.");
+    printLine("  TYPE 'HELP' FOR COMMAND DIRECTORY.");
+    printLine("==================================================\n");
+
+    // Keep focus on terminal input
+    document.addEventListener('click', () => {
+      if (!isProcessing) input.focus();
+    });
+
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        if (isProcessing) return;
+        const value = input.value.trim();
+        printLine(`> ${value}`);
+        input.value = '';
+        if (entryMode) {
+          handleAddProcess(value);
+        } else {
+          processCommand(value);
+        }
+        window.scrollTo(0, document.body.scrollHeight);
+      }
+    });
+
+    function printLine(text) {
+      const line = document.createElement('div');
+      line.textContent = text;
+      output.appendChild(line);
+    }
+
+    function saveData() {
+      try {
+        localStorage.setItem('HOLMES_DB', JSON.stringify(database));
+      } catch (e) {
+        printLine("--------------------------------------------------");
+        printLine("CRITICAL ERROR: LOCAL STORAGE QUOTA EXCEEDED.");
+        printLine("UNABLE TO SAVE RECORD. PLEASE DELETE OLD FILES.");
+        printLine("--------------------------------------------------");
+      }
+    }
+
+    // Main Command Processor
+    function processCommand(cmdStr) {
+      const parts = cmdStr.split(' ');
+      const command = parts[0].toUpperCase();
+      const args = parts.slice(1).join(' ');
+
+      switch (command) {
+        case 'HELP':
+          printLine("COMMANDS:");
+          printLine("  LIST                - List all categories and item counts");
+          printLine("  VIEWCATEGORY <name> - View all records within a category");
+          printLine("  SEARCH <query>      - Search titles, categories, and details");
+          printLine("  VIEW <id>           - View full record details");
+          printLine("  VIEWIMG <id> [i]    - Load and launch image in new tab");
+          printLine("  PLAYVIDEO <id> [i]  - Load and launch video in new tab");
+          printLine("  VIEWPDF <id> [i]    - Load and launch PDF in new tab");
+          printLine("  DOWNLOAD <id> [i]   - Download file (Optional: attachment index #)");
+          printLine("  ADD                 - Launch interactive prompt (supports multi-file)");
+          printLine("  DELETE <id>         - Remove a record by ID");
+          printLine("  EXPORT / IMPORT     - Save or restore database JSON file");
+          printLine("  CLEAR               - Clear terminal screen");
+          break;
+
+        case 'LIST':
+          showLoadingBar("FETCHING CATEGORIES DIRECTORY", () => {
+            if (database.length === 0) {
+              printLine("NO RECORDS FOUND IN ARCHIVE.");
+            } else {
+              const categoryCounts = {};
+              database.forEach(item => {
+                const cat = item.category ? item.category.toUpperCase() : "UNASSIGNED";
+                categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+              });
+
+              printLine("--------------------------------------------------");
+              printLine("ARCHIVE CATEGORIES DIRECTORY:");
+              printLine("--------------------------------------------------");
+              Object.keys(categoryCounts).forEach(cat => {
+                printLine(`  CATEGORY: ${cat.padEnd(20)} [${categoryCounts[cat]} RECORD(S)]`);
+              });
+              printLine("--------------------------------------------------");
+              printLine("USE 'VIEWCATEGORY <name>' TO VIEW ENTRIES IN A CATEGORY.");
+            }
+          });
+          break;
+
+        case 'VIEWCATEGORY':
+          if (!args) {
+            printLine("ERROR: Specify category name. Usage: VIEWCATEGORY <name>");
+            return;
+          }
+          const catQuery = args.toUpperCase();
+          showLoadingBar(`SCANNING CATEGORY [${catQuery}]`, () => {
+            const categoryMatches = database.filter(item => 
+              (item.category && item.category.toUpperCase() === catQuery)
+            );
+
+            if (categoryMatches.length === 0) {
+              printLine(`NO RECORDS FOUND UNDER CATEGORY '${catQuery}'.`);
+            } else {
+              printLine("--------------------------------------------------");
+              printLine(`CATEGORY: ${catQuery} (${categoryMatches.length} RECORDS FOUND)`);
+              printLine("--------------------------------------------------");
+              categoryMatches.forEach(item => {
+                const files = item.attachments || [];
+                const fileTag = files.length > 0 ? ` [FILES: ${files.length}]` : '';
+                printLine(`[${item.id}] ${item.title}${fileTag}`);
+              });
+              printLine("--------------------------------------------------");
+            }
+          });
+          break;
+
+        case 'SEARCH':
+          if (!args) {
+            printLine("ERROR: Specify search query. Usage: SEARCH <query>");
+            return;
+          }
+          showLoadingBar(`SEARCHING ARCHIVE FOR [${args.toUpperCase()}]`, () => {
+            const matches = database.filter(item => 
+              item.title.toLowerCase().includes(args.toLowerCase()) || 
+              item.category.toLowerCase().includes(args.toLowerCase()) || 
+              item.details.toLowerCase().includes(args.toLowerCase())
+            );
+            printLine(`FOUND ${matches.length} RECORD(S):`);
+            matches.forEach(m => printLine(`[${m.id}] ${m.title} (${m.category})`));
+          });
+          break;
+
+        case 'VIEW':
+          if (!args) {
+            printLine("ERROR: Specify Record ID. Usage: VIEW <id>");
+            return;
+          }
+          showLoadingBar(`RETRIEVING RECORD [${args.toUpperCase()}]`, () => {
+            const target = database.find(item => item.id.toUpperCase() === args.toUpperCase());
+            if (!target) {
+              printLine("ERROR: Record ID not found.");
+            } else {
+              printLine("--------------------------------------------------");
+              printLine(`ID:         ${target.id}`);
+              printLine(`TITLE:      ${target.title}`);
+              printLine(`CATEGORY:   ${target.category}`);
+              printLine("--------------------------------------------------");
+              printLine(`DETAILS:\n${target.details}`);
+              printLine("--------------------------------------------------");
+              const files = target.attachments || [];
+              if (files.length === 0) {
+                printLine("ATTACHMENTS: NONE");
+              } else {
+                printLine(`ATTACHMENTS (${files.length}):`);
+                files.forEach((f, index) => {
+                  printLine(`  [${index + 1}] ${f.fileName} (${f.fileType})`);
+                });
+              }
+              printLine("--------------------------------------------------");
+            }
+          });
+          break;
+
+        case 'VIEWIMG':
+          handleMediaLaunch(args, 'image');
+          break;
+
+        case 'PLAYVIDEO':
+          handleMediaLaunch(args, 'video');
+          break;
+
+        case 'VIEWPDF':
+          handleMediaLaunch(args, 'pdf');
+          break;
+
+        case 'DOWNLOAD':
+          const dlParts = args.split(' ');
+          const recId = dlParts[0];
+          const fileIndex = dlParts[1] ? parseInt(dlParts[1], 10) - 1 : 0;
+
+          if (!recId) {
+            printLine("ERROR: Specify Record ID. Usage: DOWNLOAD <id> [index]");
+            return;
+          }
+
+          showLoadingBar(`PREPARING DOWNLOAD [${recId.toUpperCase()}]`, () => {
+            const fileTarget = database.find(item => item.id.toUpperCase() === recId.toUpperCase());
+            if (!fileTarget) {
+              printLine("ERROR: Record ID not found.");
+            } else if (!fileTarget.attachments || fileTarget.attachments.length === 0) {
+              printLine("ERROR: Selected record has no attached files.");
+            } else if (!fileTarget.attachments[fileIndex]) {
+              printLine(`ERROR: Invalid attachment index. Available: 1 to ${fileTarget.attachments.length}`);
+            } else {
+              const att = fileTarget.attachments[fileIndex];
+              const dlAnchor = document.createElement('a');
+              dlAnchor.href = att.fileData;
+              dlAnchor.download = att.fileName;
+              document.body.appendChild(dlAnchor);
+              dlAnchor.click();
+              dlAnchor.remove();
+              printLine(`SUCCESS: DOWNLOADING [${att.fileName}]`);
+            }
+          });
+          break;
+
+        case 'ADD':
+          showLoadingBar("INITIALIZING ADD SEQUENCE", () => {
+            entryMode = true;
+            entryStep = 1;
+            tempEntry = { attachments: [] };
+            printLine("[ADD MODE] Enter Record Title:");
+          });
+          break;
+
+        case 'DELETE':
+          if (!args) {
+            printLine("ERROR: Specify Record ID. Usage: DELETE <id>");
+            return;
+          }
+          showLoadingBar(`PURGING RECORD [${args.toUpperCase()}]`, () => {
+            const initialCount = database.length;
+            database = database.filter(item => item.id.toUpperCase() !== args.toUpperCase());
+            if (database.length < initialCount) {
+              saveData();
+              printLine(`RECORD ${args.toUpperCase()} DELETED SUCCESSFULLY.`);
+            } else {
+              printLine("ERROR: Record ID not found.");
+            }
+          });
+          break;
+
+        case 'EXPORT':
+          showLoadingBar("ENCRYPTING & EXPORTING DATABASE", () => {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(database, null, 2));
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", `holmes_backup_${Date.now()}.json`);
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+            printLine("DATABASE EXPORTED SUCCESSFULLY.");
+          });
+          break;
+
+        case 'IMPORT':
+          fileInput.click();
+          break;
+
+        case 'CLEAR':
+          output.innerHTML = '';
+          break;
+
+        case '':
+          break;
+
+        default:
+          printLine(`UNKNOWN COMMAND: '${command}'. TYPE 'HELP' FOR COMMANDS.`);
+      }
+    }
+
+    // Prepares the media item and triggers the loading process
+    function handleMediaLaunch(recordId, type) {
+      const parts = recordId.split(' ');
+      const recId = parts[0];
+      const targetIndex = parts[1] ? parseInt(parts[1], 10) - 1 : 0;
+
+      if (!recId) {
+        printLine(`ERROR: Specify Record ID. Usage: ${type.toUpperCase()} <id>`);
+        return;
+      }
+
+      const record = database.find(item => item.id.toUpperCase() === recId.toUpperCase());
+      if (!record) {
+        printLine("ERROR: Record ID not found.");
+        return;
+      }
+
+      const files = record.attachments || [];
+      if (files.length === 0) {
+        printLine("ERROR: Record has no attachments.");
+        return;
+      }
+
+      const attachment = files[targetIndex];
+      if (!attachment) {
+        printLine(`ERROR: Invalid attachment index. Choose 1 to ${files.length}`);
+        return;
+      }
+
+      showLoadingBar(`DECRYPTING & LOADING [${attachment.fileName}]`, () => {
+        openFileInRetroTab(attachment, type);
+      });
+    }
+
+    // Universal Terminal Retro Loading Animation Bar
+    function showLoadingBar(taskLabel, callback) {
+      isProcessing = true;
+      input.disabled = true;
+
+      const container = document.createElement('div');
+      container.className = 'loading-container';
+
+      const label = document.createElement('div');
+      label.textContent = `${taskLabel}... 0%`;
+
+      const border = document.createElement('div');
+      border.className = 'loading-border';
+
+      const bar = document.createElement('div');
+      bar.className = 'loading-bar';
+
+      border.appendChild(bar);
+      container.appendChild(label);
+      container.appendChild(border);
+      output.appendChild(container);
+
+      let progress = 0;
+      const interval = setInterval(() => {
+        progress += Math.floor(Math.random() * 18) + 8;
+        if (progress >= 100) {
+          progress = 100;
+          bar.style.width = '100%';
+          label.textContent = `${taskLabel}... 100% [COMPLETE]`;
+          clearInterval(interval);
+          setTimeout(() => {
+            isProcessing = false;
+            input.disabled = false;
+            input.focus();
+            if (callback) callback();
+          }, 250);
+        } else {
+          bar.style.width = `${progress}%`;
+          label.textContent = `${taskLabel}... ${progress}%`;
+        }
+        window.scrollTo(0, document.body.scrollHeight);
+      }, 70);
+    }
+
+    // Opens file in a new window formatted in identical retro aesthetic
+    function openFileInRetroTab(attachment, type) {
+      const newTab = window.open('', '_blank');
+      if (!newTab) {
+        printLine("ERROR: POPUP BLOCKED BY BROWSER. ALLOW POPUPS TO VIEW FILES.");
+        return;
+      }
+
+      let contentElement = '';
+      if (type === 'image') {
+        contentElement = `<img src="${attachment.fileData}" alt="${attachment.fileName}" style="max-width:100%; max-height:80vh; object-fit:contain; border: 1px solid #00ff66;">`;
+      } else if (type === 'video') {
+        contentElement = `<video controls src="${attachment.fileData}" style="max-width:100%; max-height:80vh; border: 1px solid #00ff66;"></video>`;
+      } else if (type === 'pdf') {
+        contentElement = `<iframe src="${attachment.fileData}#view=Fit&toolbar=0&navpanes=0" style="width:100%; height:82vh; border: 1px solid #00ff66;"></iframe>`;
+      }
+
+      const retroPageHTML = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <title>H.O.L.M.E.S. VIEW PORT - ${attachment.fileName}</title>
+          <style>
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            body {
+              background-color: #050b05;
+              color: #00ff66;
+              font-family: 'Courier New', Courier, monospace;
+              font-size: 16px;
+              min-height: 100vh;
+              padding: 20px;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+            }
+            .crt-overlay {
+              position: fixed;
+              top: 0; left: 0;
+              width: 100vw; height: 100vh;
+              background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+              background-size: 100% 4px;
+              pointer-events: none;
+              z-index: 10;
+            }
+            .header {
+              width: 100%;
+              max-width: 900px;
+              margin-bottom: 15px;
+              text-shadow: 0 0 5px rgba(0, 255, 102, 0.7);
+              border-bottom: 1px solid #00ff66;
+              padding-bottom: 8px;
+            }
+            .content-box {
+              width: 100%;
+              max-width: 900px;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              background: #000;
+              padding: 10px;
+              box-shadow: 0 0 10px rgba(0, 255, 102, 0.3);
+            }
+          </style>
+        </head>
+        <body>
+          <div class="crt-overlay"></div>
+          <div class="header">
+            [H.O.L.M.E.S. ARCHIVE FILE VIEWPORT]<br>
+            FILE: ${attachment.fileName} | TYPE: ${attachment.fileType}
+          </div>
+          <div class="content-box">
+            ${contentElement}
+          </div>
+        </body>
+        </html>
+      `;
+
+      newTab.document.open();
+      newTab.document.write(retroPageHTML);
+      newTab.document.close();
+    }
+
+    // Multi-step Interactive ADD process
+    function handleAddProcess(inputVal) {
+      if (entryStep === 1) {
+        if (!inputVal) return printLine("Title cannot be empty. Enter Title:");
+        tempEntry.title = inputVal;
+        entryStep = 2;
+        printLine("Enter Category:");
+      } else if (entryStep === 2) {
+        tempEntry.category = inputVal || "UNASSIGNED";
+        entryStep = 3;
+        printLine("Enter Record Details:");
+      } else if (entryStep === 3) {
+        tempEntry.details = inputVal || "No details provided.";
+        entryStep = 4;
+        printLine("Attach files? Select multiple in prompt or skip (Y/N):");
+      } else if (entryStep === 4) {
+        const choice = inputVal.toUpperCase();
+        if (choice === 'Y' || choice === 'YES') {
+          attachInput.click();
+        } else {
+          showLoadingBar("SAVING NEW RECORD", () => {
+            finalizeRecord();
+          });
+        }
+      }
+    }
+
+    function finalizeRecord() {
+      const nextNum = String(database.length + 1).padStart(3, '0');
+      tempEntry.id = `REC-${nextNum}`;
+      database.push(tempEntry);
+      saveData();
+      printLine(`[SUCCESS] RECORD SAVED AS ${tempEntry.id}`);
+      entryMode = false;
+      entryStep = 0;
+      tempEntry = {};
+    }
+
+    // Multi-file Attachment Handler with Size Check
+    attachInput.addEventListener('change', e => {
+      const files = Array.from(e.target.files);
+      if (files.length === 0) {
+        showLoadingBar("SAVING NEW RECORD", () => {
+          finalizeRecord();
+        });
+        return;
+      }
+
+      showLoadingBar("PROCESSING ATTACHMENT(S)", () => {
+        let loadedCount = 0;
+        files.forEach(file => {
+          if (file.size > MAX_SINGLE_FILE_SIZE) {
+            printLine("--------------------------------------------------");
+            printLine(`ERROR: SKIPPING [${file.name}] - FILE TOO BIG.`);
+            printLine(`MAX ALLOWED: 2.00 MB | FILE SIZE: ${(file.size / (1024 * 1024)).toFixed(2)} MB`);
+            printLine("--------------------------------------------------");
+            loadedCount++;
+            if (loadedCount === files.length) finalizeRecord();
+            return;
+          }
+
+          const reader = new FileReader();
+          reader.onload = event => {
+            tempEntry.attachments.push({
+              fileName: file.name,
+              fileType: file.type || 'application/octet-stream',
+              fileData: event.target.result
+            });
+            printLine(`[ATTACHED] ${file.name} (${Math.round(file.size / 1024)} KB)`);
+            loadedCount++;
+            if (loadedCount === files.length) {
+              attachInput.value = '';
+              finalizeRecord();
+            }
+          };
+          reader.readAsDataURL(file);
+        });
+      });
+    });
+
+    // File Import Handler
+    fileInput.addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      showLoadingBar(`IMPORTING DATABASE FROM [${file.name.toUpperCase()}]`, () => {
+        const reader = new FileReader();
+        reader.onload = event => {
+          try {
+            const importedData = JSON.parse(event.target.result);
+            if (Array.isArray(importedData)) {
+              database = importedData;
+              saveData();
+              printLine("DATABASE IMPORT SUCCESSFUL. RECORDS UPDATED.");
+            } else {
+              printLine("ERROR: Invalid file format. Expected a JSON array.");
+            }
+          } catch (err) {
+            printLine("ERROR: Failed to parse backup file.");
+          }
+        };
+        reader.readAsText(file);
+      });
+    });
+  </script>
+</body>
+</html>
